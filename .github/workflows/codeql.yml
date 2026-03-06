@@ -1,0 +1,61 @@
+name: "CodeQL Security Analysis"
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - '.github/workflows/**'
+  pull_request:
+    branches: ["main"]
+    paths:
+      - '.github/workflows/**'
+  schedule:
+    # Run weekly on Mondays at 10 AM UTC
+    - cron: '0 10 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze GitHub Actions Workflows
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write  # Required to upload SARIF results
+      actions: read          # Required to read workflow information
+      contents: read         # Required to checkout repository
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['actions']  # Analyze GitHub Actions workflows
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          # Optional: Specify custom queries
+          # queries: security-extended,security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
+          upload: true
+          # Upload SARIF results to GitHub Security tab
+          output: sarif-results
+
+      - name: Upload SARIF results as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: codeql-results
+          path: sarif-results
+          retention-days: 7
