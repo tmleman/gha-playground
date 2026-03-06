@@ -1,0 +1,29 @@
+# unpinned.yml
+#
+# what:
+# unpinned actions usage.
+#
+# how:
+# GitHub Actions allows "bare" docker actions usage, e.g.
+# `uses: docker://ubuntu` without a pin. this is non-ideal and a potential
+# security issue, since leaving actions unpinned means that the latest default
+# branch changes are always used.
+
+name: example
+on: [push]
+
+jobs:
+  unpinned-0:
+    runs-on: ubuntu-latest
+    steps:
+      # NOT OK: unpinned
+      - uses: docker://ubuntu
+        with:
+          entrypoint: /bin/echo
+          args: hello!
+
+      # NOT OK: unpinned
+      - uses: docker://ghcr.io/pypa/gh-action-pypi-publish
+        with:
+          entrypoint: /bin/echo
+          args: hello!
