@@ -27,11 +27,7 @@ jobs:
         run: semgrep scan --sarif --config "p/github-actions" --output semgrep.sarif
 
       - name: Upload SARIF file
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          sarif_file: semgrep.sarif
+        uses: github/codeql-action/upload-sarif@c10b8064de6f491fea524254123dbe5e09572f13 # v4
         if: always()
         with:
-          name: semgrep-results
-          path: sarif-results
-          retention-days: 7
+          sarif_file: semgrep.sarif
