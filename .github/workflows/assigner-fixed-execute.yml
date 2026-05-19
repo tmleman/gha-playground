@@ -1,0 +1,120 @@
+# =============================================================================
+# FIXED WORKFLOW B — Privileged Execution (via workflow_run)
+# =============================================================================
+# This workflow:
+# - Triggers ONLY on workflow_run completion of the Analyze workflow
+# - Downloads pre-validated artifacts (not raw PR content)
+# - Performs additional validation before processing
+# - ✅ Secrets are never in the same context as attacker-controlled code
+# =============================================================================
+
+name: "POC: Fixed Assigner — Execute (privileged)"
+
+on:
+  workflow_run:
+    workflows: ["POC: Fixed Assigner — Analyze (unprivileged)"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  execute:
+    name: "✅ SAFE: Execute Assignment (with secrets, validated input only)"
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Check out base repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Download analysis artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: assigner-analysis
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate metadata (defense in depth)
+        run: |
+          python3 << 'EOF'
+          import json
+          import re
+          import sys
+
+          with open("assignment_metadata.json") as f:
+              meta = json.load(f)
+
+          # Strict validation of all fields
+          pr_number = meta.get("pr_number", "")
+          if pr_number and not str(pr_number).isdigit():
+              print(f"REJECT: pr_number must be numeric, got: {pr_number}")
+              sys.exit(1)
+
+          for field in ["repo_owner", "repo_name"]:
+              val = meta.get(field, "")
+              if val and not re.match(r'^[a-zA-Z0-9_.-]+$', val):
+                  print(f"REJECT: {field} has invalid chars: {val}")
+                  sys.exit(1)
+
+          print("✅ Metadata validation passed:")
+          print(json.dumps(meta, indent=2))
+          EOF
+
+      - name: Run assignment script (secrets available, but input is validated)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "::notice::Running with secrets, but input was validated in separate unprivileged workflow"
+
+          # Read metadata safely from validated JSON
+          PR_NUMBER=$(python3 -c "import json; print(json.load(open('assignment_metadata.json'))['pr_number'])")
+          REPO_OWNER=$(python3 -c "import json; print(json.load(open('assignment_metadata.json'))['repo_owner'])")
+          REPO_NAME=$(python3 -c "import json; print(json.load(open('assignment_metadata.json'))['repo_name'])")
+          BASE_REF=$(python3 -c "import json; print(json.load(open('assignment_metadata.json'))['base_ref'])")
+
+          FLAGS="-v"
+          FLAGS+=" -o ${REPO_OWNER}"
+          FLAGS+=" -r ${REPO_NAME}"
+          FLAGS+=" -M MAINTAINERS.yml"
+
+          if [ "${BASE_REF}" = "main" ] && [ -f "pr_MAINTAINERS.yml" ]; then
+            FLAGS+=" -P ${PR_NUMBER} --updated-maintainer-file pr_MAINTAINERS.yml"
+          else
+            FLAGS+=" -P ${PR_NUMBER}"
+          fi
+
+          python3 scripts/ci/set_assignees.py ${FLAGS}
+
+      - name: "📊 Summary"
+        run: |
+          echo "## ✅ Privileged Execution Complete (Fixed Pattern)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This workflow demonstrates the **secure two-workflow pattern**:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. ✅ Secrets only accessible in \`workflow_run\` context" >> $GITHUB_STEP_SUMMARY
+          echo "2. ✅ Input pre-validated by unprivileged workflow" >> $GITHUB_STEP_SUMMARY
+          echo "3. ✅ Additional validation (defense in depth)" >> $GITHUB_STEP_SUMMARY
+          echo "4. ✅ No template injection (\`env:\` vars instead of \`\${{ }}\`)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Attack mitigated:** Even if an attacker opens a malicious PR, the" >> $GITHUB_STEP_SUMMARY
+          echo "unprivileged Analyze workflow has no secrets to steal, and the" >> $GITHUB_STEP_SUMMARY
+          echo "privileged Execute workflow only processes validated artifacts." >> $GITHUB_STEP_SUMMARY
+
+  skipped:
+    name: "Skip (analysis failed)"
+    if: github.event.workflow_run.conclusion != 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report skipped
+        run: |
+          echo "::warning::Analysis workflow did not succeed (conclusion: ${{ github.event.workflow_run.conclusion }})"
+          echo "Skipping privileged execution — input validation failed or workflow was cancelled."

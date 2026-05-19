@@ -1,0 +1,139 @@
+# =============================================================================
+# FIXED WORKFLOW A — Unprivileged Analysis (NO SECRETS)
+# =============================================================================
+# This workflow:
+# - Triggers on pull_request_target (same as vulnerable version)
+# - Fetches attacker-controlled files
+# - Validates them (basic schema check)
+# - Uploads sanitized artifacts for the privileged workflow
+# - ✅ NEVER has access to secrets
+# =============================================================================
+
+name: "POC: Fixed Assigner — Analyze (unprivileged)"
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: "✅ SAFE: Analyze PR (no secrets)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # NO issues: write
+      # NO pull-requests: write
+      # NO secrets access needed
+
+    steps:
+      - name: Check out base repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Fetch PR files (attacker-controlled, but no secrets here)
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "::notice::Fetching PR content in UNPRIVILEGED context (no secrets available)"
+          git fetch origin "pull/${PR_NUMBER}/merge"
+          git show FETCH_HEAD:MAINTAINERS.yml > pr_MAINTAINERS.yml 2>/dev/null || echo "No MAINTAINERS.yml in PR"
+
+      - name: Validate YAML schema (reject malformed input)
+        run: |
+          python3 << 'EOF'
+          import yaml
+          import sys
+          import re
+          import os
+
+          def validate_maintainers(path):
+              if not os.path.isfile(path):
+                  print(f"SKIP: {path} not found in PR")
+                  return True
+
+              with open(path) as f:
+                  doc = yaml.safe_load(f)
+
+              if not isinstance(doc, dict):
+                  print(f"REJECT: {path} root is not a YAML mapping")
+                  return False
+
+              for area_name, area_data in doc.items():
+                  if not isinstance(area_data, dict):
+                      continue
+                  for field in ['maintainers', 'collaborators']:
+                      users = area_data.get(field, [])
+                      if users is None:
+                          continue
+                      if not isinstance(users, list):
+                          print(f"REJECT: {field} in '{area_name}' must be a list")
+                          return False
+                      for user in users:
+                          if not isinstance(user, str):
+                              print(f"REJECT: {field} entry must be string")
+                              return False
+                          # GitHub username: alphanumeric + hyphens, 1-39 chars
+                          if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$', user):
+                              print(f"REJECT: Invalid GitHub username format: '{user}'")
+                              return False
+
+              print(f"PASS: {path} validated ({len(doc)} areas)")
+              return True
+
+          if not validate_maintainers('pr_MAINTAINERS.yml'):
+              sys.exit(1)
+          EOF
+
+      - name: Generate assignment metadata
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+          REPO_OWNER: ${{ github.event.repository.owner.login }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          python3 << 'EOF'
+          import json
+          import os
+
+          metadata = {
+              "pr_number": os.environ["PR_NUMBER"],
+              "base_ref": os.environ["BASE_REF"],
+              "repo_owner": os.environ["REPO_OWNER"],
+              "repo_name": os.environ["REPO_NAME"],
+          }
+
+          with open("assignment_metadata.json", "w") as f:
+              json.dump(metadata, f, indent=2)
+
+          print("Generated metadata:")
+          print(json.dumps(metadata, indent=2))
+          EOF
+
+      - name: Upload analysis artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: assigner-analysis
+          path: |
+            assignment_metadata.json
+            pr_MAINTAINERS.yml
+          retention-days: 1
+          if-no-files-found: warn
+
+      - name: "📊 Summary"
+        run: |
+          echo "## ✅ Unprivileged Analysis Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Fetched PR content in a context with **NO secrets**" >> $GITHUB_STEP_SUMMARY
+          echo "- Validated YAML schema (username format, structure)" >> $GITHUB_STEP_SUMMARY
+          echo "- Uploaded sanitized artifacts for privileged workflow" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Even if the attacker provides malicious YAML, no secrets can be exfiltrated from this job." >> $GITHUB_STEP_SUMMARY

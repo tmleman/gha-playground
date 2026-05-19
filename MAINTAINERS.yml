@@ -1,0 +1,32 @@
+# Test MAINTAINERS.yml for PWN Request POC
+# This file simulates the Zephyr MAINTAINERS.yml structure
+
+"Kernel":
+  status: maintained
+  maintainers:
+    - tmleman
+  collaborators:
+    - test-collaborator
+  labels:
+    - "area: Kernel"
+  files:
+    - kernel/
+
+"Drivers":
+  status: maintained
+  maintainers:
+    - tmleman
+  collaborators: []
+  labels:
+    - "area: Drivers"
+  files:
+    - drivers/
+
+"Documentation":
+  status: maintained
+  maintainers:
+    - tmleman
+  labels:
+    - "area: Documentation"
+  files:
+    - doc/
