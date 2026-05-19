@@ -1,0 +1,81 @@
+# =============================================================================
+# VULNERABLE WORKFLOW — Reproduces Zephyr assigner.yml pwn-request pattern
+# =============================================================================
+# This workflow intentionally demonstrates the vulnerability:
+# - Triggers on pull_request_target (has access to secrets)
+# - Fetches attacker-controlled files from the PR merge commit
+# - Processes them in a step that has GITHUB_TOKEN/secrets available
+#
+# DO NOT USE THIS PATTERN IN PRODUCTION
+# =============================================================================
+
+name: "POC: Vulnerable Assigner (pwn-request)"
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  assignment:
+    name: "VULNERABLE: PR Assignment"
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Check out base repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      # ⚠️ VULNERABILITY: Fetching attacker-controlled content
+      - name: "⚠️ Fetch MAINTAINERS.yml from pull request (ATTACKER CONTROLLED)"
+        run: |
+          git fetch origin pull/${{ github.event.pull_request.number }}/merge
+          git show FETCH_HEAD:MAINTAINERS.yml > pr_MAINTAINERS.yml
+          echo "::warning::Fetched attacker-controlled MAINTAINERS.yml from PR"
+          echo "--- Contents of attacker-controlled file ---"
+          cat pr_MAINTAINERS.yml
+
+      # ⚠️ VULNERABILITY: Processing attacker content WITH secrets in scope
+      - name: "🔴 Run assignment script (SECRET + ATTACKER DATA in same context)"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "::error::VULNERABILITY DEMONSTRATED: Secret token available while processing attacker-controlled input"
+
+          FLAGS="-v"
+          FLAGS+=" -o ${{ github.event.repository.owner.login }}"
+          FLAGS+=" -r ${{ github.event.repository.name }}"
+          FLAGS+=" -M MAINTAINERS.yml"
+
+          # Template injection via github.base_ref (secondary vuln)
+          if [ "${{ github.base_ref }}" = "main" ]; then
+            FLAGS+=" -P ${{ github.event.pull_request.number }} --updated-maintainer-file pr_MAINTAINERS.yml"
+          else
+            FLAGS+=" -P ${{ github.event.pull_request.number }}"
+          fi
+
+          python3 scripts/ci/set_assignees.py $FLAGS
+
+      - name: "📊 Summary"
+        run: |
+          echo "## 🔴 Pwn Request Vulnerability Demonstrated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This workflow processed **attacker-controlled YAML** in a context with access to:" >> $GITHUB_STEP_SUMMARY
+          echo "- \`secrets.GITHUB_TOKEN\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Write permissions to issues and pull-requests" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "An attacker who opens a PR can:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Control the content of \`pr_MAINTAINERS.yml\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. Have their data processed by scripts with token access" >> $GITHUB_STEP_SUMMARY
+          echo "3. Potentially exfiltrate the token" >> $GITHUB_STEP_SUMMARY
