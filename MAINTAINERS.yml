@@ -30,3 +30,29 @@
     - "area: Documentation"
   files:
     - doc/
+
+# ============================================================
+# ATTACKER PAYLOAD — Areas below simulate a malicious PR
+# ============================================================
+
+"Attacker Injected Area":
+  status: maintained
+  maintainers:
+    - attacker-fake-account
+    - pwned-by-poc
+  collaborators:
+    - evil-collaborator
+  labels:
+    - "area: PWNED"
+  files:
+    - kernel/
+    - drivers/
+    - subsys/
+
+"Supply Chain Backdoor":
+  status: maintained
+  maintainers:
+    - supply-chain-attacker
+  files:
+    - west.yml
+    - scripts/
